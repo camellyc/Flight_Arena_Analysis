@@ -377,6 +377,9 @@ def calculate_derivative(signal):
     """
     return np.diff(signal, prepend=signal[0])
 
+
+'''
+Old detect spikes code, placing the spike at the time point of maximum derivative. Used before 2024/12/06
 def detect_spikes(signal, derivative, adaptive_threshold, sampling_rate, min_spike_distance_ms=10):
     """
     Detect spikes in the EMG signal and measure their amplitudes.
@@ -415,6 +418,57 @@ def detect_spikes(signal, derivative, adaptive_threshold, sampling_rate, min_spi
             
             last_spike_index = i
 
+    return spike_count, spike_amplitudes 
+'''
+
+def detect_spikes(signal, derivative, adaptive_threshold, sampling_rate, min_spike_distance_ms=10):
+    """
+    Detect spikes in the EMG signal and measure their amplitudes.
+    The spike is marked at the absolute peak within ±2.5ms window around derivative peak.
+    Used after 2024/12/06.
+    
+    Parameters:
+    - signal: Raw EMG signal
+    - derivative: Signal derivative
+    - adaptive_threshold: Threshold array
+    - sampling_rate: Sampling rate in Hz
+    - min_spike_distance_ms: Minimum distance between spikes in ms
+    
+    Returns:
+    - spike_count: Binary array marking spike occurrences
+    - spike_amplitudes: Array of spike amplitudes (0 where no spike)
+    """
+    spike_count = np.zeros(len(signal))
+    spike_amplitudes = np.zeros(len(signal))
+    min_distance = int(min_spike_distance_ms * sampling_rate / 1000)
+    window_samples = int(2.5 * sampling_rate / 1000)  # 2.5ms on each side
+    post_window_samples = int(5 * sampling_rate / 1000)  # 5ms window for trough detection
+    last_spike_index = -min_distance
+    
+    for i in tqdm(range(window_samples, len(signal) - window_samples), desc="Detecting Spikes"):
+        if (derivative[i] > derivative[i - 1] and
+            derivative[i] > derivative[i + 1] and
+            abs(signal[i]) > adaptive_threshold[i] and
+            (i - last_spike_index) > min_distance):
+            
+            # Find absolute peak within ±2.5ms window
+            start_idx = max(0, i - window_samples)
+            end_idx = min(len(signal), i + window_samples + 1)
+            window = signal[start_idx:end_idx]
+            peak_offset = np.argmax(abs(window))
+            absolute_peak_idx = start_idx + peak_offset
+            
+            # Mark spike at absolute peak
+            spike_count[absolute_peak_idx] = 1
+            
+            # Measure amplitude (peak to nearest trough within 5ms)
+            trough_end_idx = min(len(signal), absolute_peak_idx + post_window_samples)
+            trough_idx = absolute_peak_idx + np.argmin(signal[absolute_peak_idx:trough_end_idx])
+            amplitude = signal[absolute_peak_idx] - signal[trough_idx]
+            spike_amplitudes[absolute_peak_idx] = amplitude
+            
+            last_spike_index = absolute_peak_idx
+            
     return spike_count, spike_amplitudes
 
 def process_spikes(spike_raw, sampling_rate, target_spike_rate=7.0, duration=None):
